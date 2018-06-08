@@ -1,7 +1,7 @@
 {
-    "name": "graphp/graphviz",
+    "name": "baltun/graphviz",
     "type": "library",
-    "description": "GraphViz graph drawing for mathematical graph/network",
+    "description": "fork of: GraphViz graph drawing for mathematical graph/network",
     "keywords": ["GraphViz", "graph drawing", "graph image", "dot output"],
     "homepage": "https://github.com/graphp/graphviz",
     "license": "MIT",
