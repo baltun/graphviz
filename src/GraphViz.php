@@ -2,16 +2,12 @@
 
 namespace Graphp\GraphViz;
 
-use Graphp\Algorithms\Directed;
-use Graphp\Algorithms\Groups;
-use Graphp\Algorithms\Degree;
-use Fhaculty\Graph\Exception\UnexpectedValueException;
-use Fhaculty\Graph\Exception\InvalidArgumentException;
-use Fhaculty\Graph\Edge\Base as Edge;
-use \stdClass;
-use Fhaculty\Graph\Attribute\AttributeBagNamespaced;
-use Fhaculty\Graph\Graph;
-use Fhaculty\Graph\Vertex;
+use Graphp\Graph\Edge;
+use Graphp\Graph\EdgeDirected;
+use Graphp\Graph\Entity;
+use Graphp\Graph\Exception\UnexpectedValueException;
+use Graphp\Graph\Graph;
+use Graphp\Graph\Vertex;
 
 class GraphViz
 {
@@ -38,6 +34,13 @@ class GraphViz
      * @see GraphViz::createScript()
      */
     private $formatIndent = '  ';
+
+    private $attributeFlow = 'flow';
+    private $attributeCapacity = 'capacity';
+    private $attributeWeight = 'weight';
+
+    private $attributeGroup = 'group';
+    private $attributeBalance = 'balance';
 
     const DELAY_OPEN = 2.0;
 
@@ -155,7 +158,10 @@ class GraphViz
      */
     public function createImageSrc(Graph $graph)
     {
-        $format = ($this->format === 'svg' || $this->format === 'svgz') ? 'svg+xml' : $this->format;
+        $format = $this->format;
+        if ($this->format === 'svg' || $this->format === 'svgz') {
+            $format = 'svg+xml;charset=' . $graph->getAttribute('graphviz.graph.charset', 'UTF-8');
+        }
 
         return 'data:image/' . $format . ';base64,' . base64_encode($this->createImageData($graph));
     }
@@ -224,43 +230,70 @@ class GraphViz
      */
     public function createScript(Graph $graph)
     {
-        $alg = new Directed($graph);
-        $directed = $alg->hasDirected();
+        $directed = false;
+        foreach ($graph->getEdges() as $edge) {
+            if ($edge instanceof EdgeDirected) {
+                $directed = true;
+                break;
+            }
+        }
 
-        $script = ($directed ? 'di':'') . 'graph G {' . self::EOL.'rankdir = LR'. self::EOL;
+        /*
+         * The website [http://www.graphviz.org/content/dot-language] uses the term `ID` when displaying
+         * the abstract grammar for the DOT language.
+         * But the man pages for dot use the term `name` when describing the graph file language.
+         */
+        $name = $graph->getAttribute('graphviz.name');
+        if ($name !== null) {
+            $name = $this->escape($name) . ' ';
+        }
+
+        $script = ($directed ? 'di':'') . 'graph ' . $name . '{' . self::EOL;
 
         // add global attributes
         $globals = array(
             'graph' => 'graphviz.graph.',
             'node'  => 'graphviz.node.',
             'edge'  => 'graphviz.edge.',
-            'rankdir' => 'LR',
         );
 
         foreach ($globals as $key => $prefix) {
-            $bag = new AttributeBagNamespaced($graph, $prefix);
-
-            if ($layout = $bag->getAttributes()) {
+            if ($layout = $this->getAttributesPrefixed($graph, $prefix)) {
                 $script .= $this->formatIndent . $key . ' ' . $this->escapeAttributes($layout) . self::EOL;
             }
         }
 
-        $alg = new Groups($graph);
-        // only append group number to vertex label if there are at least 2 different groups
-        $showGroups = ($alg->getNumberOfGroups() > 1);
+        // build an array to map vertex hashes to vertex IDs for output
+        $tid = 0;
+        $vids = array();
 
-        if ($showGroups) {
-            $gid = 0;
+        $groups = array();
+        foreach ($graph->getVertices() as $vertex) {
+            assert($vertex instanceof Vertex);
+            $groups[$vertex->getAttribute('group', 0)][] = $vertex;
+
+            $id = $vertex->getAttribute('id');
+            if ($id === null) {
+                $id = ++$tid;
+            }
+
+            $vids[\spl_object_hash($vertex)] = $id;
+        }
+
+        // only cluster vertices into groups if there are at least 2 different groups
+        if (count($groups) > 1) {
             $indent = str_repeat($this->formatIndent, 2);
+            $gid = 0;
             // put each group of vertices in a separate subgraph cluster
-            foreach ($alg->getGroups() as $group) {
+            foreach ($groups as $group => $vertices) {
                 $script .= $this->formatIndent . 'subgraph cluster_' . $gid++ . ' {' . self::EOL .
                            $indent . 'label = ' . $this->escape($group) . self::EOL;
-                foreach($alg->getVerticesGroup($group)->getMap() as $vid => $vertex) {
-                    $layout = $this->getLayoutVertex($vertex);
+                foreach ($vertices as $vertex) {
+                    $vid = $vids[\spl_object_hash($vertex)];
+                    $layout = $this->getLayoutVertex($vertex, $vid);
 
-                    $script .= $indent . $this->escapeId($vid);
-                    if($layout){
+                    $script .= $indent . $this->escape($vid);
+                    if ($layout) {
                         $script .= ' ' . $this->escapeAttributes($layout);
                     }
                     $script .= self::EOL;
@@ -268,16 +301,15 @@ class GraphViz
                 $script .= '  }' . self::EOL;
             }
         } else {
-            $alg = new Degree($graph);
-
             // explicitly add all isolated vertices (vertices with no edges) and vertices with special layout set
             // other vertices wil be added automatically due to below edge definitions
-            foreach ($graph->getVertices()->getMap() as $vid => $vertex){
-                $layout = $this->getLayoutVertex($vertex);
+            foreach ($graph->getVertices() as $vertex){
+                $vid = $vids[\spl_object_hash($vertex)];
+                $layout = $this->getLayoutVertex($vertex, $vid);
 
-                if($layout || $alg->isVertexIsolated($vertex)){
-                    $script .= $this->formatIndent . $this->escapeId($vid);
-                    if($layout){
+                if ($layout || $vertex->getEdges()->isEmpty()) {
+                    $script .= $this->formatIndent . $this->escape($vid);
+                    if ($layout) {
                         $script .= ' ' . $this->escapeAttributes($layout);
                     }
                     $script .= self::EOL;
@@ -293,12 +325,12 @@ class GraphViz
             $currentStartVertex = $both[0];
             $currentTargetVertex = $both[1];
 
-            $script .= $this->formatIndent . $this->escapeId($currentStartVertex->getId()) . $edgeop . $this->escapeId($currentTargetVertex->getId());
+            $script .= $this->formatIndent . $this->escape($vids[\spl_object_hash($currentStartVertex)]) . $edgeop . $this->escape($vids[\spl_object_hash($currentTargetVertex)]);
 
             $layout = $this->getLayoutEdge($currentEdge);
 
-            // this edge also points to the opposite direction => this is actually an undirected edge
-            if ($directed && $currentEdge->isConnection($currentTargetVertex, $currentStartVertex)) {
+            // this edge is not a loop and also points to the opposite direction => this is actually an undirected edge
+            if ($directed && $currentStartVertex !== $currentTargetVertex && $currentEdge->isConnection($currentTargetVertex, $currentStartVertex)) {
                 $layout['dir'] = 'none';
             }
             if ($layout) {
@@ -313,23 +345,14 @@ class GraphViz
     }
 
     /**
-     * escape given id string and wrap in quotes if needed
+     * escape given string value and wrap in quotes if needed
      *
      * @param  string $id
      * @return string
      * @link http://graphviz.org/content/dot-language
      */
-    private function escapeId($id)
+    private function escape($id)
     {
-        return self::escape($id);
-    }
-
-    public static function escape($id)
-    {
-        // see raw()
-        if ($id instanceof stdClass && isset($id->string)) {
-            return $id->string;
-        }
         // see @link: There is no semantic difference between abc_2 and "abc_2"
         // numeric or simple string, no need to quote (only for simplicity)
         if (preg_match('/^(?:\-?(?:\.\d+|\d+(?:\.\d+)?))$/i', $id)) {
@@ -344,7 +367,7 @@ class GraphViz
      *
      * @param  array  $attrs
      * @return string
-     * @uses GraphViz::escapeId()
+     * @uses GraphViz::escape()
      */
     private function escapeAttributes($attrs)
     {
@@ -356,37 +379,38 @@ class GraphViz
             } else {
                 $script .= ' ';
             }
-            $script .= $name . '=' . self::escape($value);
+
+            if (\substr($name, -5) === '_html') {
+                // HTML-like labels need to be wrapped in angle brackets
+                $name = \substr($name, 0, -5);
+                $value = '<' . $value . '>';
+            } elseif (\substr($name, -7) === '_record') {
+                // record labels need to be quoted
+                $name = \substr($name, 0, -7);
+                $value = '"' . \str_replace('"', '\\"', $value) . '"';
+            } else {
+                // all normal attributes need to be escaped and/or quoted
+                $value = $this->escape($value);
+            }
+
+            $script .= $name . '=' . $value;
         }
         $script .= ']';
 
         return $script;
     }
 
-    /**
-     * create a raw string representation, i.e. do NOT escape the given string when used in graphviz output
-     *
-     * @param  string   $string
-     * @return StdClass
-     * @see GraphViz::escape()
-     */
-    public static function raw($string)
+    private function getLayoutVertex(Vertex $vertex, $vid)
     {
-        return (object) array('string' => $string);
-    }
+        $layout = $this->getAttributesPrefixed($vertex, 'graphviz.');
 
-    protected function getLayoutVertex(Vertex $vertex)
-    {
-        $bag = new AttributeBagNamespaced($vertex, 'graphviz.');
-        $layout = $bag->getAttributes();
-
-        $balance = $vertex->getBalance();
-        if($balance !== NULL){
-            if($balance > 0){
+        $balance = $vertex->getAttribute($this->attributeBalance);
+        if ($balance !== NULL) {
+            if ($balance > 0) {
                 $balance = '+' . $balance;
             }
-            if(!isset($layout['label'])){
-                $layout['label'] = $vertex->getId();
+            if (!isset($layout['label'])) {
+                $layout['label'] = $vid;
             }
             $layout['label'] .= ' (' . $balance . ')';
         }
@@ -396,14 +420,13 @@ class GraphViz
 
     protected function getLayoutEdge(Edge $edge)
     {
-        $bag = new AttributeBagNamespaced($edge, 'graphviz.');
-        $layout = $bag->getAttributes();
+        $layout = $this->getAttributesPrefixed($edge, 'graphviz.');
 
         // use flow/capacity/weight as edge label
         $label = NULL;
 
-        $flow = $edge->getFlow();
-        $capacity = $edge->getCapacity();
+        $flow = $edge->getAttribute($this->attributeFlow);
+        $capacity = $edge->getAttribute($this->attributeCapacity);
         // flow is set
         if ($flow !== NULL) {
             // NULL capacity = infinite capacity
@@ -413,7 +436,7 @@ class GraphViz
             $label = '0/' . $capacity;
         }
 
-        $weight = $edge->getWeight();
+        $weight = $edge->getAttribute($this->attributeWeight);
         // weight is set
         if ($weight !== NULL) {
             if ($label === NULL) {
@@ -431,5 +454,23 @@ class GraphViz
             }
         }
         return $layout;
+    }
+
+    /**
+     * @param Graph|Vertex|Edge $entity
+     * @param string            $prefix
+     * @return array
+     */
+    private function getAttributesPrefixed(Entity $entity, $prefix)
+    {
+        $len = \strlen($prefix);
+        $attributes = array();
+        foreach ($entity->getAttributes() as $name => $value) {
+            if (\strpos($name, $prefix) === 0) {
+                $attributes[substr($name, $len)] = $value;
+            }
+        }
+
+        return $attributes;
     }
 }
