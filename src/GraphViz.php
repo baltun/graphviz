@@ -195,17 +195,18 @@ class GraphViz
         $script = $this->createScript($graph);
 //        dd($script);
 
-        $tmp = tempnam(sys_get_temp_dir(), 'graphviz');
+        $tmp = public_path()."/images/graphs/".$fileName; // эта строка нужна для запуска тестов из командной строки
+        $url = "images/graphs/".$fileName;
 //        dd($tmp);
         if ($tmp === false) {
             throw new UnexpectedValueException('Unable to get temporary file name for graphviz script');
         }
-        $tmp = "images/graphs/".$fileName;
+
         $ret = file_put_contents($tmp, $script, LOCK_EX);
         if ($ret === false) {
             throw new UnexpectedValueException('Unable to write graphviz script to temporary file');
         }
-//        dd($ret);
+
         $ret = 0;
 
         $executable = $this->getExecutable();
@@ -216,7 +217,15 @@ class GraphViz
 
         unlink($tmp);
 
-        return $tmp . '.' . $this->format;
+        //        dd(php_sapi_name());
+        if (\App::runningInConsole()) {
+            $fileAddress = $tmp . '.' . $this->format;
+        } else {
+            $fileAddress = $url . '.' . $this->format;
+        }
+//        dd($fileAddress);
+
+        return $fileAddress;
     }
 
     /**
