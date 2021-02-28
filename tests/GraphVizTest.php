@@ -67,7 +67,6 @@ graph {
 }
 
 VIZ;
-
         $this->assertEquals($expected, $this->graphViz->createScript($graph));
     }
 
@@ -200,7 +199,13 @@ digraph {
 
 VIZ;
 
-        $this->assertEquals($expected, $this->graphViz->createScript($graph));
+        $graphScript = $this->graphViz->createScript($graph);
+
+        // проверяю генерацию графа
+var_dump($expected, $graphScript);
+        $this->assertEquals($expected, $graphScript);
+        $graphviz = new Graphp\GraphViz\GraphViz();
+        $graphviz->display($graph, 'graph1');
     }
 
     public function testGraphDirectedWithLoopUsesDigraphWithSimpleLoopDefinition()
