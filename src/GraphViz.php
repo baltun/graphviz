@@ -103,10 +103,10 @@ class GraphViz
      * @return void
      * @uses GraphViz::createImageFile()
      */
-    public function display(Graph $graph)
+    public function display(Graph $graph, string $fileName)
     {
         // echo "Generate picture ...";
-        $tmp = $this->createImageFile($graph);
+        $tmp = $this->createImageFile($graph, $fileName);
 
         static $next = 0;
         if ($next > microtime(true)) {
@@ -184,12 +184,22 @@ class GraphViz
      * @throws UnexpectedValueException on error
      * @uses GraphViz::createScript()
      */
-    public function createImageFile(Graph $graph)
+    public function createImageFile(Graph $graph, string $fileName)
     {
         $script = $this->createScript($graph);
         // var_dump($script);
 
         $tmp = tempnam(sys_get_temp_dir(), 'graphviz');
+
+        // устанавливаем своё значение пути к файлу и имени файла,
+        // в зависимости от того, скрипт выполняется в консоли или через web
+        $isCLI = ( php_sapi_name() == 'cli' );
+        if ($isCLI) {
+            $tmp = "images/graphs/".$fileName;
+        } else {
+            $tmp = public_path()."/images/graphs/".$fileName; // эта строка нужна для запуска тестов из командной строки
+        }
+
         if ($tmp === false) {
             throw new UnexpectedValueException('Unable to get temporary file name for graphviz script');
         }
