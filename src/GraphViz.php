@@ -194,9 +194,9 @@ class GraphViz
         // в зависимости от того, скрипт выполняется в консоли или через web
         $isCLI = ( php_sapi_name() == 'cli' );
         if ($isCLI) {
-            $tmp = "images/graphs/".$fileName;
+            $tmp = "../images/graphs/".$fileName;
         } else {
-            $tmp = public_path()."/images/graphs/".$fileName; // эта строка нужна для запуска тестов из командной строки
+            $tmp = "images/graphs/".$fileName; // эта строка нужна для запуска тестов из командной строки
         }
 
         if ($tmp === false) {
